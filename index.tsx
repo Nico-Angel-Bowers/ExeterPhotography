@@ -309,18 +309,29 @@ const ARC_SIZE_CLAMP: Record<'md' | 'lg', string> = {
 const ArcHeading: React.FC<{ children: string; className?: string; italic?: boolean; size?: 'md' | 'lg' }> = ({ children, className = '', italic = false, size = 'lg' }) => {
   const pathId = `arc-${useId().replace(/[:]/g, '')}`;
   const [width, setWidth] = useState(() => Math.max(460, children.length * 52 + 120));
+  const [measured, setMeasured] = useState(false);
 
   useEffect(() => {
+    // Wait for the real webfont before ever showing this — measuring against the fallback font
+    // first (like FitText briefly did) produces a visible resize/"flash" once Bodoni Moda loads.
+    let cancelled = false;
     const measure = () => {
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.font = `${italic ? 'italic ' : ''}400 ${ARC_FONT}px "Bodoni Moda"`;
       const natural = ctx.measureText(children.toUpperCase()).width;
-      if (natural > 0) setWidth(natural + 140);
+      if (natural > 0 && !cancelled) {
+        setWidth(natural + 140);
+        setMeasured(true);
+      }
     };
-    measure();
-    if ('fonts' in document) (document as any).fonts.ready.then(measure);
+    if ('fonts' in document && (document as any).fonts.status !== 'loaded') {
+      (document as any).fonts.ready.then(() => { if (!cancelled) measure(); });
+    } else {
+      measure();
+    }
+    return () => { cancelled = true; };
   }, [children, italic]);
 
   const height = 172;
@@ -328,39 +339,53 @@ const ArcHeading: React.FC<{ children: string; className?: string; italic?: bool
   const baseline = height - 40;
   const pathD = `M 20,${baseline} Q ${width / 2},${baseline - curve} ${width - 20},${baseline}`;
   return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      className={`block relative left-1/2 ${className}`}
-      style={{ width: `${width / ARC_FONT}em`, height: `${height / ARC_FONT}em`, fontSize: ARC_SIZE_CLAMP[size], transform: 'translateX(-50%)' }}
-      preserveAspectRatio="xMidYMax meet"
-    >
-      <defs>
-        <path id={pathId} d={pathD} fill="none" />
-      </defs>
-      <text
-        textAnchor="middle"
-        fill="currentColor"
-        className="uppercase"
-        style={{ fontFamily: "'Bodoni Moda', serif", fontSize: ARC_FONT, fontStyle: italic ? 'italic' : 'normal' }}
+    // A flex wrapper with justify-center, not margin/left tricks — this SVG is routinely wider
+    // than the column it sits in (long titles), and margin/left-based centering resolves
+    // asymmetrically once an element's own width exceeds its container. Flexbox centers an
+    // oversized child symmetrically, same fix already proven out on the orbit rings.
+    <div className={`w-full flex justify-center ${className}`}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="block"
+        style={{
+          width: `${width / ARC_FONT}em`,
+          height: `${height / ARC_FONT}em`,
+          fontSize: ARC_SIZE_CLAMP[size],
+          opacity: measured ? 1 : 0,
+          transition: 'opacity 0.5s ease-out',
+        }}
+        preserveAspectRatio="xMidYMax meet"
       >
-        <textPath href={`#${pathId}`} startOffset="50%" textAnchor="middle">
-          {children}
-        </textPath>
-      </text>
-    </svg>
+        <defs>
+          <path id={pathId} d={pathD} fill="none" />
+        </defs>
+        <text
+          textAnchor="middle"
+          fill="currentColor"
+          className="uppercase"
+          style={{ fontFamily: "'Bodoni Moda', serif", fontSize: ARC_FONT, fontStyle: italic ? 'italic' : 'normal' }}
+        >
+          <textPath href={`#${pathId}`} startOffset="50%" textAnchor="middle">
+            {children}
+          </textPath>
+        </text>
+      </svg>
+    </div>
   );
 };
 
 // Straight full-bleed line: a short word and a long word stacked as two lines both reach edge to
 // edge, but by scaling the actual font-size (measured with canvas) rather than stretching letter
 // spacing — real point-size changes, like an actual poster, not artificially spread-out glyphs.
-const FitText: React.FC<{ children: string; className?: string; italic?: boolean }> = ({ children, className = '', italic = false }) => {
+const FitText: React.FC<{ children: string; className?: string; italic?: boolean; enterFrom?: 'left' | 'right'; enterDelay?: number }> = ({ children, className = '', italic = false, enterFrom, enterDelay = 0 }) => {
   const ref = useRef<HTMLDivElement>(null);
   const [fontSize, setFontSize] = useState<number | null>(null);
+  const [revealed, setRevealed] = useState(false);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    let cancelled = false;
 
     const measure = () => {
       const containerWidth = el.clientWidth;
@@ -371,22 +396,42 @@ const FitText: React.FC<{ children: string; className?: string; italic?: boolean
       const refSize = 300;
       ctx.font = `${italic ? 'italic ' : ''}400 ${refSize}px "Bodoni Moda"`;
       const textWidth = ctx.measureText(children.toUpperCase()).width;
-      if (textWidth > 0) setFontSize((containerWidth / textWidth) * refSize * 0.99);
+      if (textWidth > 0 && !cancelled) setFontSize((containerWidth / textWidth) * refSize * 0.99);
     };
 
-    measure();
-    const onFontsReady = () => measure();
-    if ('fonts' in document) (document as any).fonts.ready.then(onFontsReady);
+    // Wait for the real webfont before the first measurement — measuring against the fallback
+    // font first causes a visible resize/"flash" once Bodoni Moda finishes loading in.
+    if ('fonts' in document && (document as any).fonts.status !== 'loaded') {
+      (document as any).fonts.ready.then(() => { if (!cancelled) measure(); });
+    } else {
+      measure();
+    }
+
     const ro = new ResizeObserver(measure);
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => { cancelled = true; ro.disconnect(); };
   }, [children, italic]);
+
+  // Reveal a beat after sizing lands, so the browser paints the pre-animation (offset/hidden)
+  // state first — otherwise the transition has nothing to animate from and just pops in place.
+  useEffect(() => {
+    if (fontSize == null) return;
+    const t = setTimeout(() => setRevealed(true), 50 + enterDelay);
+    return () => clearTimeout(t);
+  }, [fontSize, enterDelay]);
+
+  const offset = enterFrom === 'left' ? -120 : enterFrom === 'right' ? 120 : 0;
 
   return (
     <div
       ref={ref}
       className={`w-full text-center whitespace-nowrap uppercase serif leading-[0.82] ${italic ? 'italic' : ''} ${className}`}
-      style={{ fontSize: fontSize ? `${fontSize}px` : undefined, opacity: fontSize ? 1 : 0 }}
+      style={{
+        fontSize: fontSize ? `${fontSize}px` : undefined,
+        opacity: fontSize ? (revealed ? 1 : 0) : 0,
+        transform: `translateX(${revealed ? 0 : offset}px)`,
+        transition: 'opacity 2.6s cubic-bezier(0.16,1,0.3,1), transform 2.6s cubic-bezier(0.16,1,0.3,1)',
+      }}
     >
       {children}
     </div>
@@ -458,8 +503,11 @@ const OrbitRings: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     };
   });
 
+  // No mx-auto and no left/transform trick — this box is wider than its container on phones,
+  // and margin/left-based centering has quirky overflow handling. The parent <section> is a flex
+  // container with items-center, and flexbox centers oversized children symmetrically for free.
   return (
-    <div className="relative mx-auto" style={{ width: 'clamp(400px, 58vw, 1600px)', aspectRatio: '1 / 1' }}>
+    <div className="relative" style={{ width: 'clamp(400px, 58vw, 1600px)', aspectRatio: '1 / 1' }}>
       {rings.map((r, i) => <OrbitRing key={i} {...r} />)}
       <div className="absolute inset-0 m-auto rounded-full bg-[#fcfcfc] dark:bg-black blur-xl" style={{ width: '44%', height: '44%' }} />
       <div className="absolute inset-0 flex items-center justify-center px-6">
@@ -585,32 +633,25 @@ const SpecimenTile: React.FC<{ to: string; image: string; name: string; index: n
 
 const Home: React.FC = () => (
   <section className="text-center reveal w-full flex-grow flex flex-col items-center">
-    <div className="flex-grow flex flex-col items-center justify-center w-full px-4 text-center pt-6 pb-16">
+    <div className="w-full flex flex-col items-center justify-center px-4 text-center pt-6 pb-6">
       <div className="flex items-center justify-center gap-4 mb-4">
         <span className="block text-[9px] uppercase tracking-[0.8em] text-black dark:text-gray-600">Est. Exeter, NH</span>
       </div>
       <div className="mb-4 w-full flex justify-center">
         <RotatingSeal size={92} className="hidden md:block" />
       </div>
-      <h1 className="mb-8 w-full text-black dark:text-white">
-        <FitText>Exeter</FitText>
-        <FitText italic className="-mt-[1%]">Photography</FitText>
+      <h1 className="mb-6 w-full text-black dark:text-white">
+        <FitText enterFrom="left">Exeter</FitText>
+        <FitText italic enterFrom="right" enterDelay={350} className="-mt-[1%]">Photography</FitText>
       </h1>
 
-      <div className="mb-6 space-y-6 max-w-xl mx-auto text-center flex flex-col items-center">
-          <p className="text-sm md:text-base uppercase tracking-[0.3em] text-black/60 dark:text-gray-500 font-light px-4">
-            A place to share campus events through your own lens
-          </p>
-          <div className="pt-2">
-            <Link to="/contact" className="inline-block border border-black dark:border-white/10 px-10 py-3 text-[9px] uppercase tracking-[0.4em] text-black dark:text-white hover:bg-black dark:hover:bg-white hover:text-white dark:hover:text-black transition-all duration-700">
-              Submit Here
-            </Link>
-          </div>
-      </div>
+      <p className="text-sm md:text-base uppercase tracking-[0.3em] text-black/60 dark:text-gray-500 font-light px-4 max-w-xl mx-auto">
+        A place to share campus events through your own lens
+      </p>
     </div>
 
     <div className="w-full pb-16 px-4 md:px-8 border-t border-black/10 dark:border-white/10">
-      <Reveal className="mb-10 pt-10 max-w-md mx-auto flex flex-col items-center justify-center">
+      <Reveal className="mb-10 pt-8 max-w-md mx-auto flex flex-col items-center justify-center">
           <h2 className="text-[9px] font-medium uppercase tracking-[0.6em] text-black dark:text-gray-600 text-center">This month's photographers</h2>
           <div className="h-[1px] w-12 bg-black/10 dark:bg-white/10 mx-auto mt-2"></div>
       </Reveal>
@@ -626,13 +667,19 @@ const Home: React.FC = () => (
           />
         ))}
       </div>
+
+      <Reveal className="mt-16 flex justify-center">
+        <Link to="/contact" className="inline-block border border-black dark:border-white/10 px-10 py-3 text-[9px] uppercase tracking-[0.4em] text-black dark:text-white hover:bg-black dark:hover:bg-white hover:text-white dark:hover:text-black transition-all duration-700">
+          Submit Here
+        </Link>
+      </Reveal>
     </div>
   </section>
 );
 
 const EventsPage: React.FC = () => (
   <section className="reveal w-full px-4 md:px-8 xl:px-12 pb-24 flex flex-col items-center">
-    <Reveal className="max-w-4xl mx-auto mb-16 mt-12 text-center">
+    <Reveal className="w-full max-w-4xl mx-auto mb-8 mt-12 text-center">
       <h2 className="text-[9px] uppercase tracking-[0.8em] text-black dark:text-gray-700 block mb-4">The Archive</h2>
       <ArcHeading size="md" className="text-black dark:text-white mb-2 -mt-2">Events</ArcHeading>
       <div className="h-[1px] w-24 bg-black/10 dark:bg-white/10 mx-auto"></div>
@@ -675,7 +722,7 @@ const PhotographerDetail: React.FC = () => {
 
   return (
     <div className="reveal w-full px-4 md:px-8 xl:px-12 pb-24">
-      <section className="max-w-5xl mx-auto mb-16 mt-12 text-center">
+      <section className="w-full max-w-5xl mx-auto mb-16 mt-12 text-center">
         <div className="mb-4">
             <span className="text-[9px] uppercase tracking-[0.8em] text-black dark:text-gray-700 block mb-4">Registry // Photographer</span>
             <ArcHeading className="text-black dark:text-white mb-2">{photographer.name}</ArcHeading>
@@ -736,7 +783,7 @@ const EventDetail: React.FC = () => {
 
   return (
     <div className="reveal w-full px-4 md:px-8 xl:px-12 pb-24">
-      <section className="max-w-5xl mx-auto mb-24 mt-8 text-center">
+      <section className="w-full max-w-5xl mx-auto mb-24 mt-8 text-center">
         <div className="mb-4">
             <span className="text-[9px] uppercase tracking-[0.8em] text-black dark:text-gray-700 block mb-3">Event Archive // {event.date}</span>
             <ArcHeading className="text-black dark:text-white" italic>{event.title}</ArcHeading>
@@ -783,7 +830,7 @@ const PortfolioDetail: React.FC = () => {
 
   return (
     <div className="reveal w-full px-4 md:px-8 xl:px-12 pb-24">
-      <section className="max-w-5xl mx-auto mb-24 mt-8 text-center">
+      <section className="w-full max-w-5xl mx-auto mb-24 mt-8 text-center">
         <div className="mb-4">
             <span className="text-[9px] uppercase tracking-[0.8em] text-black dark:text-gray-700 block mb-3">{photographer.name} // Archive</span>
             <ArcHeading className="text-black dark:text-white" italic>{portfolio.title}</ArcHeading>
@@ -819,10 +866,10 @@ const PortfolioDetail: React.FC = () => {
 
 const PhotographersPage: React.FC = () => (
   <section className="reveal w-full px-4 md:px-8 xl:px-12 pb-24 flex flex-col items-center">
-    <div className="max-w-4xl mx-auto mb-16 mt-12 text-center">
+    <div className="w-full max-w-4xl mx-auto mb-8 mt-12 text-center">
       <h2 className="text-[9px] uppercase tracking-[0.8em] text-black dark:text-gray-700 block mb-4">Registry</h2>
       <ArcHeading size="md" className="text-black dark:text-white mb-2 -mt-2">Photographers</ArcHeading>
-      <div className="h-[1px] w-24 bg-black/10 dark:bg-white/10 mx-auto mb-12"></div>
+      <div className="h-[1px] w-24 bg-black/10 dark:bg-white/10 mx-auto mb-6"></div>
     </div>
 
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 xl:gap-8 max-w-7xl mx-auto w-full">
@@ -847,7 +894,7 @@ const PhotographersPage: React.FC = () => (
 );
 
 const AboutContact: React.FC = () => (
-  <section className="reveal w-screen ml-[calc(50%-50vw)] mr-[calc(50%-50vw)] px-4 py-14 md:py-0 flex-grow flex flex-col items-center justify-center relative overflow-hidden min-h-[85vh] md:min-h-[calc(100vh-96px)]">
+  <section className="reveal w-screen ml-[calc(50%-50vw)] mr-[calc(50%-50vw)] px-4 py-0 flex-grow flex flex-col items-center justify-center relative overflow-hidden min-h-[calc(100vh-182px)] md:min-h-[calc(100vh-96px)]">
     <OrbitRings>
       <div className="text-center flex flex-col items-center gap-1.5 sm:gap-3 max-w-[160px] sm:max-w-[260px]">
         <span className="text-[7px] sm:text-[8px] uppercase tracking-[0.4em] text-black dark:text-gray-600">Mission &amp; Contact</span>
