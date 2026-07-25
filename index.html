@@ -4,26 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Exeter Photography | Collective Archive</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['Space Grotesk', 'sans-serif'],
-                        serif: ['Bodoni Moda', 'serif'],
-                    },
-                    keyframes: {
-                        'spin-slow': { from: { transform: 'rotate(0deg)' }, to: { transform: 'rotate(360deg)' } },
-                    },
-                    animation: {
-                        'spin-slow': 'spin-slow 22s linear infinite',
-                    }
-                }
-            }
-        }
-    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..900;1,6..96,400..900&family=Space+Grotesk:wght@300..700&display=swap" rel="stylesheet">
@@ -79,6 +59,14 @@
         }
         .reveal {
             animation: reveal 1.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        /* Weaker/older hardware (and anyone who's asked for less motion) gets the rings frozen
+           in place rather than fighting the GPU to animate several large layers at once. */
+        @media (prefers-reduced-motion: reduce) {
+            .reveal, .orbit-ring {
+                animation: none !important;
+            }
         }
 
         ::-webkit-scrollbar {

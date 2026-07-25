@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useId } from 'react';
 import ReactDOM from 'react-dom/client';
 import { HashRouter, Routes, Route, Link, useLocation, useParams, Navigate } from 'react-router-dom';
+import './styles.css';
 
 // --- Types ---
 interface CollectionImage {
@@ -400,12 +401,14 @@ const OrbitRing: React.FC<{ text: string; sizePct: number; duration: number; rev
   return (
     <svg
       viewBox="0 0 100 100"
-      className="absolute top-1/2 left-1/2 text-black dark:text-white"
+      className="orbit-ring absolute top-1/2 left-1/2 text-black dark:text-white"
       style={{
         width: `${sizePct}%`,
         height: `${sizePct}%`,
         animation: `${reverse ? 'orbit-ccw-centered' : 'orbit-cw-centered'} ${duration}s linear infinite`,
         opacity,
+        willChange: 'transform',
+        backfaceVisibility: 'hidden',
       }}
     >
       <defs>
@@ -437,26 +440,28 @@ const OrbitRings: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Rings generated from a formula rather than hand-picked sizes. The gap between consecutive
   // rings grows gradually outward — a flat gap would get visually tighter as the font grows,
   // since bigger type needs more radial room even though the percentage step is the same.
+  // Kept to a modest count: each ring is an animated, blurred-adjacent SVG layer, and piling on
+  // too many tanks frame rate (and reads as flashing/stutter) on lower-powered laptops.
   const textCycle = [photographerRing, portfolioRing, eventRing, locationRing, registryRing, archiveRing, taglineRing];
-  const ringCount = 12;
+  const ringCount = 8;
   let cursor = 62;
   const rings = Array.from({ length: ringCount }, (_, i) => {
     const sizePct = cursor;
-    cursor += 15 + i * 1.4;
+    cursor += 15 + i * 2.2;
     return {
       text: textCycle[i % textCycle.length],
       sizePct,
-      duration: 30 + i * 13,
+      duration: 30 + i * 14,
       reverse: i % 2 === 1,
-      fontSize: 3.6 + i * 0.055,
-      opacity: Math.max(0.1, 0.95 - i * 0.075),
+      fontSize: 3.6 + i * 0.08,
+      opacity: Math.max(0.12, 0.9 - i * 0.11),
     };
   });
 
   return (
-    <div className="relative mx-auto" style={{ width: 'clamp(340px, 58vw, 1600px)', aspectRatio: '1 / 1' }}>
+    <div className="relative mx-auto" style={{ width: 'clamp(400px, 58vw, 1600px)', aspectRatio: '1 / 1' }}>
       {rings.map((r, i) => <OrbitRing key={i} {...r} />)}
-      <div className="absolute inset-0 m-auto rounded-full bg-[#fcfcfc] dark:bg-black blur-2xl" style={{ width: '38%', height: '38%' }} />
+      <div className="absolute inset-0 m-auto rounded-full bg-[#fcfcfc] dark:bg-black blur-xl" style={{ width: '44%', height: '44%' }} />
       <div className="absolute inset-0 flex items-center justify-center px-6">
         {children}
       </div>
@@ -844,10 +849,10 @@ const PhotographersPage: React.FC = () => (
 const AboutContact: React.FC = () => (
   <section className="reveal w-screen ml-[calc(50%-50vw)] mr-[calc(50%-50vw)] px-4 py-14 md:py-0 flex-grow flex flex-col items-center justify-center relative overflow-hidden min-h-[85vh] md:min-h-[calc(100vh-96px)]">
     <OrbitRings>
-      <div className="text-center flex flex-col items-center gap-2 sm:gap-3 max-w-[150px] sm:max-w-[260px]">
+      <div className="text-center flex flex-col items-center gap-1.5 sm:gap-3 max-w-[160px] sm:max-w-[260px]">
         <span className="text-[7px] sm:text-[8px] uppercase tracking-[0.4em] text-black dark:text-gray-600">Mission &amp; Contact</span>
         <h3 className="text-lg sm:text-3xl serif italic text-black dark:text-white leading-tight">Exeter Photography</h3>
-        <p className="hidden sm:block text-[11px] sm:text-xs leading-relaxed italic serif text-black dark:text-gray-400">
+        <p className="text-[9px] sm:text-xs leading-snug sm:leading-relaxed italic serif text-black dark:text-gray-400">
           An archive for students to share the world through their own lens. Based in Exeter, New Hampshire.
         </p>
         <div className="pt-2 sm:pt-3 mt-1 space-y-1.5 sm:space-y-2 border-t border-black/10 dark:border-white/10 w-full">
